@@ -9,7 +9,6 @@ import pascal.taie.ir.stmt.New;
 import pascal.taie.language.classes.JMethod;
 
 import java.util.HashMap;
-import java.util.Map;
 import java.util.TreeSet;
 
 public class PointerAnalysis extends PointerAnalysisTrivial

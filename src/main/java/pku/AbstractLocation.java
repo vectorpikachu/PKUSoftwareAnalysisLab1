@@ -1,12 +1,8 @@
 package pku;
 
-import com.sun.source.tree.Tree;
 import pascal.taie.ir.stmt.New;
 
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Set;
-import java.util.TreeSet;
 
 /**
  * 根据Jonathan Aldrich的Lecture Notes: Pointer Analysis
