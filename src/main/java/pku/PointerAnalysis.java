@@ -9,6 +9,7 @@ import pascal.taie.ir.stmt.New;
 import pascal.taie.language.classes.JMethod;
 
 import java.util.HashMap;
+import java.util.Random;
 import java.util.TreeSet;
 
 public class PointerAnalysis extends PointerAnalysisTrivial
@@ -40,12 +41,10 @@ public class PointerAnalysis extends PointerAnalysisTrivial
              * 我们应该把 B b = new B(); 看成一种赋值.
              * b := temp$0; --> join(*b, *temp$0);这样.
              */
-            System.out.println(preprocess.obj_ids);
             var stmts = ir.getStmts();
             for (var stmt : stmts) {
                 if (stmt instanceof AssignStmt<?,?>) {
                     if (stmt instanceof New) {
-                        System.out.println(stmt);
                         var newVar = ((New) stmt).getLValue();
                         AbstractLocation newLocation = getLocation(points_to, newVar);
                         newLocation.addNewStmt((New) stmt);
@@ -59,10 +58,22 @@ public class PointerAnalysis extends PointerAnalysisTrivial
                         continue;
                     }
                     // 剩下的是形如 p := q 这样的语句
+                    System.out.println(lvalue + "=" + rvalue + ":");
                     AbstractLocation lLocation = getLocation(points_to, (Var) lvalue);
                     AbstractLocation rLocation = getLocation(points_to, (Var) rvalue);
-                    AbstractLocation.union(lLocation, rLocation);
-                    System.out.println(lvalue + "=" + rvalue);
+                    if (((Var) rvalue).getName().startsWith("temp$")) {
+                        // 这是一个p := {q} p 应该直接指向 q
+                        lLocation.parents.add(rLocation);
+                        AbstractLocation.conditionalUnion(lLocation);
+                        continue;
+                    }
+                    System.out.println(rLocation.realNewStmts);
+                    // p 指向 q
+                    lLocation.parents.addAll(rLocation.parents);
+                    AbstractLocation.conditionalUnion(lLocation);
+                    for (var parent : lLocation.parents) {
+                        System.out.println(parent.realNewStmts);
+                    }
                 }
             }
         }
@@ -70,8 +81,10 @@ public class PointerAnalysis extends PointerAnalysisTrivial
         preprocess.test_pts.forEach((test_id, pt)->{
             AbstractLocation ptLocation = getLocation(points_to, pt);
             var ptResult = new TreeSet<Integer>();
-            for (var stmt : ptLocation.realNewStmts) {
-                ptResult.add(preprocess.obj_ids.get(stmt));
+            for (var parent : ptLocation.parents) {
+                for (var stmt : parent.realNewStmts) {
+                    ptResult.add(preprocess.obj_ids.get(stmt));
+                }
             }
             result.put(test_id, ptResult);
         });
@@ -93,9 +106,11 @@ public class PointerAnalysis extends PointerAnalysisTrivial
 
     public AbstractLocation getLocation(HashMap<Var, AbstractLocation> points_to, Var var) {
         if (!points_to.containsKey(var)) {
-            points_to.put(var, new AbstractLocation());
+            Random random = new Random();
+            var category = random.nextInt(AbstractLocation.maxOutDegree);
+            points_to.put(var, new AbstractLocation(category));
         }
-        return points_to.get(var).find();
+        return points_to.get(var);
     }
 
 }

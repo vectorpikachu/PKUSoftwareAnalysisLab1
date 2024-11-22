@@ -2,21 +2,28 @@ package pku;
 
 import pascal.taie.ir.stmt.New;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 
 /**
  * 根据Jonathan Aldrich的Lecture Notes: Pointer Analysis
  * AbstractLocation: His analysis associates each variable p with
  * an abstract location named after the variable.
+ * upd: 最新的方法是Marc Shapiro and Susan Horwitz的
+ * Fast and accurate flow-insensitive points-to analysis.
  */
 public class AbstractLocation {
-    public AbstractLocation parent;
-
+    public ArrayList<AbstractLocation> parents;
+    public static int maxOutDegree = 3;
+    public int category; // 当前集合的种类
     public HashSet<New> realNewStmts;
 
-    public AbstractLocation() {
-        this.parent = this; // 一开始, 都指向自己
+    public AbstractLocation(int category) {
+        this.parents = new ArrayList<>();
+        // this.parents.set(0, this); // 一开始, 都指向自己
         realNewStmts = new HashSet<>();
+        this.category = category;
     }
 
     public void addNewStmt(New stmt) {
@@ -27,24 +34,40 @@ public class AbstractLocation {
      * 找到当前集合的根
      * @return 当前集合的根
      */
+
+    /*
     public AbstractLocation find() {
         if (parent != this) {
             parent = parent.find(); // 路径压缩
         }
         return parent;
-    }
+    }*/
 
     /**
-     * 合并两个集合, 优先把左边的合并到右边
-     * @param x 左边的集合
-     * @param y 右边的集合
+     * 合并集合x的指向
+     * @param x 要合并指向的集合
      */
-    public static void union(AbstractLocation x, AbstractLocation y) {
-        AbstractLocation xRoot = x.find();
-        AbstractLocation yRoot = y.find();
-        if (xRoot != yRoot) {
-            yRoot.realNewStmts.addAll(xRoot.realNewStmts);
-            xRoot.parent = yRoot; // Merge the two sets
+    public static void conditionalUnion(AbstractLocation x) {
+        if (x.parents.size() <= maxOutDegree) return;
+        var group = new HashMap<Integer, ArrayList<AbstractLocation> >();
+        var tempParents = new ArrayList<AbstractLocation>();
+        for (var pt : x.parents) {
+            group.get(pt.category).add(pt);
         }
+        group.forEach((category, absLocs)->{
+            if (absLocs.size()>1) {
+                AbstractLocation tempLoc = new AbstractLocation(category);
+                absLocs.forEach(absLoc->{
+                    tempLoc.parents.addAll(absLoc.parents);
+                    tempLoc.realNewStmts.addAll(absLoc.realNewStmts);
+                });
+                tempParents.add(tempLoc);
+                conditionalUnion(tempLoc);
+            }
+            else {
+                tempParents.add(absLocs.get(0));
+            }
+        });
+        x.parents = tempParents;
     }
 }
