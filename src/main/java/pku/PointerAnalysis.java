@@ -2,6 +2,7 @@ package pku;
 
 import pascal.taie.World;
 import pascal.taie.config.AnalysisConfig;
+import pascal.taie.ir.IRPrinter;
 
 public class PointerAnalysis extends PointerAnalysisTrivial
 {
@@ -35,7 +36,7 @@ public class PointerAnalysis extends PointerAnalysisTrivial
         // As for when and how you enter one method,
         // it's your analysis assignment to accomplish
 
-        // return super.analyze();
+        //return super.analyze();
         return result;
     }
 
