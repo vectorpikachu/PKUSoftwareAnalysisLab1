@@ -20,6 +20,12 @@ public class PointerAnalysis extends PointerAnalysisTrivial
         var main = world.getMainMethod();
         var jclass = main.getDeclaringClass();
 
+        var methods = jclass.getDeclaredMethods();
+        for (var method : methods) {
+            var ir = method.getIR();
+            IRPrinter.print(ir, System.out);
+        }
+
         //var steensgaard = new Steensgaard(jclass, preprocess);
         //result = steensgaard.getResult();
 

@@ -1,25 +1,25 @@
 package pku;
 
-import pascal.taie.ir.exp.InvokeSpecial;
-import pascal.taie.ir.exp.Var;
-import pascal.taie.ir.stmt.AssignStmt;
-import pascal.taie.ir.stmt.Invoke;
-import pascal.taie.ir.stmt.New;
-import pascal.taie.ir.stmt.Stmt;
+import pascal.taie.ir.exp.*;
+import pascal.taie.ir.proginfo.FieldRef;
+import pascal.taie.ir.stmt.*;
 import pascal.taie.language.classes.JClass;
+import pascal.taie.language.classes.JField;
 import pascal.taie.language.classes.JMethod;
+import pascal.taie.util.collection.Pair;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
 public class Anderson {
-    public HashMap<Var, HashSet<Var>> points_to; // 我们分析得到的指向集合的指向
-    public HashMap<Var, HashSet<New>> points_locs; // 指针集合
+    public HashMap<Exp, HashSet<Exp>> points_to; // 我们分析得到的指向集合的指向
+    public HashMap<Exp, HashSet<New>> points_locs; // 指针集合
     public JClass jclass;
     public PreprocessResult preprocess;
-    public HashMap<Var, New> realLocs;
+    public HashMap<Exp, New> realLocs;
     public HashSet<JMethod> methodWorklist;
     public HashSet<JMethod> allMethods;
+    private Exp pt;
 
     public Anderson(JClass jclass, PreprocessResult preprocess) {
         this.jclass = jclass;
@@ -31,12 +31,16 @@ public class Anderson {
         allMethods = new HashSet<>();
     }
 
+    /*
+     * Field: a1.<benchmark.objects.A: benchmark.objects.B f> = b1;
+     */
+
     public PointerAnalysisResult getResult() {
         // methodWorklist.addAll(methods);
         var mainMethod = jclass.getDeclaredMethods()
                 .stream().filter(method -> Objects.equals(method.getName(), "main"))
                 .toList();
-        var methods = new HashSet<JMethod>(mainMethod);
+        var methods = new HashSet<>(mainMethod);
         allMethods.addAll(methods);
         do {
             for (var method : methods) {
@@ -86,7 +90,12 @@ public class Anderson {
             if (stmt instanceof AssignStmt<?,?>) {
                 if (stmt instanceof New) {
                     // 对于 temp$0 = new B();
-                    realLocs.put(((New) stmt).getLValue(), (New) stmt);
+                    addObjectCreationCConstraint((New) stmt);
+                    continue;
+                }
+                if (stmt instanceof FieldStmt<?,?>) {
+                    // 处理FieldStmt, 只要出现FieldAccess就会来到这个Stmt.
+                    handleField((FieldStmt<?, ?>) stmt);
                     continue;
                 }
                 var lvalue = ((AssignStmt<?, ?>) stmt).getLValue();
@@ -105,15 +114,8 @@ public class Anderson {
                 if (shouldContinue) {
                     continue; // 跳过当前循环迭代
                 }
-
-                if (realLocs.containsKey(rvalue)) {
-                    // p := temp${id}, 这是一个 p = {地址}的指向
-                    addObjectCreationCConstraint((Var) lvalue, realLocs.get(rvalue));
-                }
-                else {
-                    // p := q, 这里的q也可能是 temp${id} <- 来自函数调用
-                    addCopyConstraint((Var) lvalue, (Var) rvalue);
-                }
+                // p := q, 这里的q也可能是 temp${id} <- 来自函数调用
+                addCopyConstraint(lvalue, rvalue);
             } else if (stmt instanceof Invoke) {
                 // temp$0 = invoke func.
                 handleInvoke((Invoke) stmt);
@@ -123,11 +125,12 @@ public class Anderson {
         }
     }
 
-    public void addObjectCreationCConstraint(Var p, New q) {
-        // points_to.computeIfAbsent(p, k -> new HashSet<>()).add(q);
-        points_locs.computeIfAbsent(p, k -> new HashSet<>()).add(q);
+    public void addObjectCreationCConstraint(New stmt) {
+        var lvalue = stmt.getLValue();
+        points_to.put(lvalue, new HashSet<>()); // temp${id}指向空集
+        points_locs.computeIfAbsent(lvalue, k -> new HashSet<>()).add(stmt);
     }
-    public void addCopyConstraint(Var p, Var q) {
+    public void addCopyConstraint(Exp p, Exp q) {
         points_locs.computeIfAbsent(p, k -> new HashSet<>()).addAll(
                 points_locs.getOrDefault(q, new HashSet<>())
         );
@@ -188,8 +191,6 @@ public class Anderson {
         }
 
         var invokeArgs = invokeExp.getArgs(); // 获取调用的参数
-        var invokeUses = invokeExp.getUses(); // 这里的第一个, 如果有的话就是o.f()的o
-        System.out.println("invokeUses = " + invokeUses);
 
         var resolvedMethod = invokeMethodRef.resolve(); // 返回the concrete class member pointed by this reference
         var methodIR = resolvedMethod.getIR();
@@ -220,15 +221,42 @@ public class Anderson {
         if (!isStatic) {
             // 不是静态方法, temp$0 = o.f(a, b)这样的
             var methodIRThis = methodIR.getThis(); // 这里的this = o
-            var objs = invokeUses.stream().toList();
-            var objVar = objs.isEmpty() ? null : objs.get(0);
+            var objVar = ((InvokeInstanceExp) invokeExp).getBase();
             System.out.println(objVar);
             //应该filter objVar的指向使得它满足 method 的声明
 
             points_to.computeIfAbsent(methodIRThis, k -> new HashSet<>())
-                    .add((Var) objVar);
+                    .add(objVar);
             System.out.println(points_to);
         }
     }
 
+    // 处理 FieldStmt
+    public void handleField(FieldStmt<?,?> stmt) {
+        // 把每一个 Field 都拆开成单独的 变量
+        if (stmt instanceof StoreField) {
+            // 是一个o.f = a; 这样的语句
+            // \forall x \in o, x.f \supset a
+            var lvalue = stmt.getFieldAccess();
+            var rvalue = stmt.getRValue();
+            var lobj = ((InstanceFieldAccess) lvalue).getBase();
+            System.out.println(lobj.getStoreFields());
+            points_to.computeIfAbsent(lobj, k -> new HashSet<>());
+            points_to.get(lobj).forEach(pt -> {
+                var fieldPt = new InstanceFieldAccess(lvalue.getFieldRef(), (Var) pt);
+                addCopyConstraint(fieldPt, rvalue);
+            });
+        } else if (stmt instanceof LoadField) {
+            // 是一个 x = o.f; 这样的结构
+            var lvalue = stmt.getLValue();
+            var rvalue = stmt.getFieldAccess();
+            var robj = ((InstanceFieldAccess) rvalue).getBase();
+            points_to.computeIfAbsent(robj, k -> new HashSet<>());
+            points_to.get(robj).forEach(pt -> {
+                var fieldPt = new InstanceFieldAccess(rvalue.getFieldRef(), (Var) pt);
+                addCopyConstraint(lvalue, fieldPt);
+            });
+        }
+
+    }
 }
