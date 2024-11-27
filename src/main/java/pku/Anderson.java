@@ -127,12 +127,19 @@ public class Anderson {
 
     public void addObjectCreationCConstraint(New stmt) {
         var lvalue = stmt.getLValue();
-        points_to.put(lvalue, new HashSet<>()); // temp${id}指向空集
+        // points_to.put(lvalue, new HashSet<>());
+        // temp${id}指向自己
+        points_to.computeIfAbsent(lvalue, k -> new HashSet<>()).add(lvalue);
         points_locs.computeIfAbsent(lvalue, k -> new HashSet<>()).add(stmt);
     }
     public void addCopyConstraint(Exp p, Exp q) {
         points_locs.computeIfAbsent(p, k -> new HashSet<>()).addAll(
                 points_locs.getOrDefault(q, new HashSet<>())
+        );
+        // 应该是 a |-> b 也就是把 b 的所有指向 加入 a 中
+
+        points_to.computeIfAbsent(p, k -> new HashSet<>()).addAll(
+                points_to.getOrDefault(q, new HashSet<>())
         );
         points_to.computeIfAbsent(p, k -> new HashSet<>()).add(q); // 再加入q
     }
@@ -243,7 +250,7 @@ public class Anderson {
             System.out.println(lobj.getStoreFields());
             points_to.computeIfAbsent(lobj, k -> new HashSet<>());
             points_to.get(lobj).forEach(pt -> {
-                var fieldPt = new InstanceFieldAccess(lvalue.getFieldRef(), (Var) pt);
+                var fieldPt = InstanceFieldAccessFactory.getInstance(lvalue.getFieldRef(), (Var) pt);
                 addCopyConstraint(fieldPt, rvalue);
             });
         } else if (stmt instanceof LoadField) {
@@ -253,7 +260,7 @@ public class Anderson {
             var robj = ((InstanceFieldAccess) rvalue).getBase();
             points_to.computeIfAbsent(robj, k -> new HashSet<>());
             points_to.get(robj).forEach(pt -> {
-                var fieldPt = new InstanceFieldAccess(rvalue.getFieldRef(), (Var) pt);
+                var fieldPt = InstanceFieldAccessFactory.getInstance(rvalue.getFieldRef(), (Var) pt);
                 addCopyConstraint(lvalue, fieldPt);
             });
         }
