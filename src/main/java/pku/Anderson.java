@@ -98,6 +98,12 @@ public class Anderson {
                     handleField((FieldStmt<?, ?>) stmt);
                     continue;
                 }
+                if (stmt instanceof ArrayStmt<?, ?>) {
+                    // a[...] = x;
+                    // x = a [...]
+                    handleArray((ArrayStmt<?, ?>) stmt);
+                    continue;
+                }
                 var lvalue = ((AssignStmt<?, ?>) stmt).getLValue();
                 var rvalue = ((AssignStmt<?, ?>) stmt).getRValue();
                 String lvalue_type = lvalue.getType().toString();
@@ -265,5 +271,31 @@ public class Anderson {
             });
         }
 
+    }
+
+    public void handleArray(ArrayStmt<?, ?> stmt) {
+        // 直接把a[i]视为一个Var
+        // 一个数组的下标实际上是不知道的?
+        if (stmt instanceof LoadArray) {
+            // x = a[...]
+            var lvalue = stmt.getLValue();
+            var rvalue = stmt.getArrayAccess();
+            var robj = rvalue.getBase();
+            var rindex = rvalue.getIndex();
+            points_to.computeIfAbsent(robj, k -> new HashSet<>()).forEach(pt -> {
+                var arrayPt = ArrayAccessFactory.getInstance((Var) pt, rindex);
+                addCopyConstraint(lvalue, arrayPt);
+            });
+        } else if (stmt instanceof StoreArray) {
+            // a[...] = x;
+            var lvalue = stmt.getArrayAccess();
+            var rvalue = stmt.getRValue();
+            var lobj = lvalue.getBase();
+            var lindex = lvalue.getIndex();
+            points_to.computeIfAbsent(lobj, k -> new HashSet<>()).forEach(pt -> {
+                var arrayPt = ArrayAccessFactory.getInstance((Var) pt, lindex);
+                addCopyConstraint(arrayPt, rvalue);
+            });
+        }
     }
 }
