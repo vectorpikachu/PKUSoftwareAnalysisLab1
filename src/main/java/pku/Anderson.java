@@ -19,6 +19,7 @@ public class Anderson {
     // 然后在更新varPointsLocs的时候更新
     public HashMap<Exp, HashSet<New>> varPointsLocs; // 指针集合
     public HashMap<Exp, HashSet<New>> fldPointsLocs; // 记录fld的指向
+    public HashMap<JMethod, HashSet<Throw>> methodExceptions; // 记录当前方法产生的异常
     public JClass jclass;
     public PreprocessResult preprocess;
     public HashMap<Exp, New> realLocs;
@@ -36,6 +37,7 @@ public class Anderson {
         allMethods = new HashSet<>();
         fldPointsTo = new HashMap<>();
         fldPointsLocs = new HashMap<>();
+        methodExceptions = new HashMap<>();
     }
 
     /*
@@ -132,6 +134,10 @@ public class Anderson {
             } else if (stmt instanceof Invoke) {
                 // temp$0 = invoke func.
                 handleInvoke((Invoke) stmt);
+            } else if (stmt instanceof Throw) {
+                handleThrow((Throw) stmt);
+            } else if (stmt instanceof Catch) {
+                System.out.println(stmt);
             }
             System.out.println(varPointsTo);
             System.out.println(varPointsLocs);
@@ -342,5 +348,16 @@ public class Anderson {
                 addCopyConstraint(arrayPt, rvalue);
             });
         }
+    }
+
+    /**
+     * 处理Throw语句
+     * @param stmt 要处理的语句
+     */
+    public void handleThrow(Throw stmt) {
+        // 我们现在是流非敏感的, 似乎不太能解决这个问题.
+        // 暂时先不处理.
+        var nowMethod = stmt.getExceptionRef().getMethod();
+        methodExceptions.computeIfAbsent(nowMethod, k -> new HashSet<>()).add(stmt);
     }
 }

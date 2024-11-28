@@ -1,0 +1,45 @@
+// ...
+public HashMap<JMethod, HashSet<String>> methodExceptions;
+------------------------------------------------------------------------
+// ...
+methodExceptions = new HashMap<>();
+------------------------------------------------------------------------
+// ...
+if (stmt instanceof ThrowStmt) {
+            handleThrow((ThrowStmt) stmt, currentMethod);
+------------------------------------------------------------------------
+public void handleThrow(ThrowStmt stmt, JMethod currentMethod) {
+    var exceptionType = stmt.getExceptionType();
+    methodExceptions.computeIfAbsent(currentMethod, k -> new HashSet<>()).add(exceptionType);
+}
+------------------------------------------------------------------------
+当一个方法调用另一个可能抛出异常的方法时，把这些异常添加到调用者的异常列表
+public void handleInvoke(Invoke stmt) {
+    // ...
+    var calleeMethods = resolveCalleeMethods(stmt);
+    for (var calleeMethod : calleeMethods) {
+        if (methodExceptions.containsKey(calleeMethod)) {
+            var exceptions = methodExceptions.get(calleeMethod);
+            for (var exception : exceptions) {
+                methodExceptions.computeIfAbsent(currentMethod, k -> new HashSet<>()).add(exception);
+            }
+        }
+    }
+}
+------------------------------------------------------------------------
+将相同类型的异常合并为一个代表性异常（ChatGPT）
+public void optimizeExceptions() {
+    for (var entry : methodExceptions.entrySet()) {
+        var compressedSet = new HashSet<String>();
+        for (var exception : entry.getValue()) {
+            compressedSet.add(compressExceptionType(exception));
+        }
+        methodExceptions.put(entry.getKey(), compressedSet);
+    }
+}
+
+private String compressExceptionType(String exceptionType) {
+    // 实现类型压缩逻辑，例如通过删除包路径或仅使用异常类名
+    return exceptionType.substring(exceptionType.lastIndexOf('.') + 1);
+}
+
