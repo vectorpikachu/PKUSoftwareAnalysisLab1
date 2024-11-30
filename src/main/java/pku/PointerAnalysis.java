@@ -74,8 +74,13 @@ public class PointerAnalysis extends PointerAnalysisTrivial
         result = andersonFlowAnalysis.getResult();
         */
 
-        var anderson = new Anderson(main, jclass, preprocess);
-        result = anderson.getResult();
+        // var anderson = new Anderson(main, jclass, preprocess);
+        // result = anderson.getResult();
+
+        var solver = new Solver(main, preprocess);
+
+        result = solver.getResult();
+
         if (result == null) {
             return super.analyze();
         }
