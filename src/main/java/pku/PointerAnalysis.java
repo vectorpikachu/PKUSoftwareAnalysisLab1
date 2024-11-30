@@ -25,8 +25,6 @@ public class PointerAnalysis extends PointerAnalysisTrivial
 
     private static final Logger logger = LogManager.getLogger(IRDumper.class);
 
-    public CFGBuilder cfgBuilder; // 当前程序的控制流图构建工具
-
     public PointerAnalysis(AnalysisConfig config) {
         super(config);
         logger.info(config.toDetailedString());
@@ -76,8 +74,11 @@ public class PointerAnalysis extends PointerAnalysisTrivial
         result = andersonFlowAnalysis.getResult();
         */
 
-        var anderson = new Anderson(jclass, preprocess);
+        var anderson = new Anderson(main, jclass, preprocess);
         result = anderson.getResult();
+        if (result == null) {
+            return super.analyze();
+        }
         dump(result);
 
         // TODO
@@ -94,7 +95,7 @@ public class PointerAnalysis extends PointerAnalysisTrivial
 
 
     public static boolean exceedsTimeLimit() {
-        return new Date().getTime() - startTime.getTime() > 1000 * 60 * 5; // 5 minutes
+        return new Date().getTime() - startTime.getTime() > 1000 * 60 * 0.95;
     }
 
 }

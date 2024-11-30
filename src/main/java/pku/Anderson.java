@@ -1,5 +1,9 @@
 package pku;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import pascal.taie.analysis.misc.IRDumper;
+import pascal.taie.analysis.pta.plugin.util.InvokeHandler;
 import pascal.taie.ir.exp.*;
 import pascal.taie.ir.proginfo.ExceptionEntry;
 import pascal.taie.ir.proginfo.FieldRef;
@@ -13,23 +17,28 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class Anderson {
+    private static final Logger logger = LogManager.getLogger(IRDumper.class);
+
     public HashMap<Exp, HashSet<Exp>> varPointsTo; // 我们分析得到的指向集合的指向, 类似于Move(to -> from)的一张图
     // 如果是LoadFld 的话这个指向关系保存在varPointsTo里面, 记为 y -> x.f
     public HashMap<Exp, HashSet<Exp>> fldPointsTo; // 域的指向集合的关系, 就是我们现在记录 x.f -> b for store(x.f, b)
+    public HashMap<Exp, HashSet<Exp>> arrayPointsTo; // 数组的指向集合的关系, 就是我们现在记录 a[i] -> b for store(a[i], b)
     // 然后在更新varPointsLocs的时候更新
     public HashMap<Exp, HashSet<New>> varPointsLocs; // 指针集合
     public HashMap<Exp, HashSet<New>> fldPointsLocs; // 记录fld的指向
+    public HashMap<Exp, HashSet<New>> arrayPointsLocs; // 记录数组的指向, 把数组记录为类似于域一样的
     public HashMap<JMethod, HashSet<Throw>> methodExceptions; // 记录当前方法产生的异常
     public JClass jclass;
     public PreprocessResult preprocess;
     public HashMap<Exp, New> realLocs;
     public HashSet<JMethod> methodWorklist;
     public HashSet<JMethod> allMethods;
-    private Exp pt;
+    public JMethod mainMethod;
 
-    public Anderson(JClass jclass, PreprocessResult preprocess) {
+    public Anderson(JMethod main, JClass jclass, PreprocessResult preprocess) {
         this.jclass = jclass;
         this.preprocess = preprocess;
+        this.mainMethod = main;
         varPointsTo = new HashMap<>();
         realLocs = new HashMap<>();
         varPointsLocs = new HashMap<>();
@@ -38,6 +47,8 @@ public class Anderson {
         fldPointsTo = new HashMap<>();
         fldPointsLocs = new HashMap<>();
         methodExceptions = new HashMap<>();
+        arrayPointsLocs = new HashMap<>();
+        arrayPointsTo = new HashMap<>();
     }
 
     /*
@@ -46,17 +57,17 @@ public class Anderson {
 
     public PointerAnalysisResult getResult() {
         // methodWorklist.addAll(methods);
-        var mainMethod = jclass.getDeclaredMethods()
-                .stream().filter(method -> Objects.equals(method.getName(), "main"))
-                .toList();
-        var methods = new HashSet<>(mainMethod);
+        var methods = new HashSet<JMethod>();
+        methods.add(mainMethod);
         allMethods.addAll(methods);
         do {
             for (var method : methods) {
                 if (method.isAbstract()) {
                     continue;
                 }
+                System.out.println("\n\n\n");
                 System.out.println(method.getName());
+                System.out.println("\n\n\n");
                 var ir = method.getIR(); // Get intermediate representation
                 preprocess.analysis(ir);
                 // 方法里的语句的container属性包含了method.
@@ -70,10 +81,14 @@ public class Anderson {
         } while(!methods.isEmpty());
 
         // Propagate constraints
-        propagateConstraints();
+        boolean isTimeLimit = propagateConstraints();
+        if (!isTimeLimit) {
+            return null;
+        }
         System.out.println(varPointsLocs);
         System.out.println(realLocs);
         System.out.println(preprocess.obj_ids);
+        System.out.println(preprocess.test_pts);
         // System.out.println(varPointsTo);
         // 分析varPointsTo里面的东西, 输出到result
         var result = new PointerAnalysisResult();
@@ -82,7 +97,11 @@ public class Anderson {
             var ptResult = new TreeSet<Integer>();
             if (varPointsLocs.containsKey(pt)) {
                 varPointsLocs.get(pt).forEach(loc -> {
-                    ptResult.add(preprocess.obj_ids.get(loc));
+                    logger.info(pt + ":" + loc + ":" + preprocess.obj_ids.get(loc));
+                    var intLoc = preprocess.obj_ids.get(loc);
+                    if (intLoc != null) {
+                        ptResult.add(intLoc);
+                    }
                     System.out.println(pt + ":" + ptResult);
                 });
             }
@@ -113,31 +132,30 @@ public class Anderson {
                     handleArray((ArrayStmt<?, ?>) stmt);
                     continue;
                 }
-                var lvalue = ((AssignStmt<?, ?>) stmt).getLValue();
-                var rvalue = ((AssignStmt<?, ?>) stmt).getRValue();
-                String lvalue_type = lvalue.getType().toString();
-                String rvalue_type = rvalue.getType().toString();
-
-                boolean shouldContinue = false;
-                for (String prefix : valueTypes) {
-                    if (lvalue_type.startsWith(prefix)
-                        || rvalue_type.startsWith(prefix)) {
-                        shouldContinue = true;
-                        break; // 一旦匹配，不需要继续检查
-                    }
+                if (stmt instanceof Cast) {
+                    // 强制类型转换
+                    // A b = (A) a; 直接类似于 b = a
+                    logger.info(stmt);
+                    var lvalue = ((Cast) stmt).getLValue();
+                    var rvalue = ((Cast) stmt).getRValue().getValue();
+                    logger.info(lvalue + "=" + rvalue);
+                    addCopyConstraint(lvalue, rvalue);
+                    continue;
                 }
-                if (shouldContinue) {
-                    continue; // 跳过当前循环迭代
+                if (stmt instanceof Copy) {
+                    // 赋值语句
+                    var lvalue = ((Copy) stmt).getLValue();
+                    var rvalue = ((Copy) stmt).getRValue();
+                    addCopyConstraint(lvalue, rvalue);
+                    continue;
                 }
-                // p := q, 这里的q也可能是 temp${id} <- 来自函数调用
-                addCopyConstraint(lvalue, rvalue);
             } else if (stmt instanceof Invoke) {
                 // temp$0 = invoke func.
                 handleInvoke((Invoke) stmt);
             } else if (stmt instanceof Throw) {
                 handleThrow((Throw) stmt);
             } else if (stmt instanceof Catch) {
-                System.out.println(stmt);
+                handleCatch((Catch) stmt);
             }
             System.out.println(varPointsTo);
             System.out.println(varPointsLocs);
@@ -187,11 +205,43 @@ public class Anderson {
             );
         });
     }
+    public void addArrayStoreConstraint(Exp p, Exp q) {
+        // 保存 StoreArray
+        var lobj = ((ArrayAccess) p).getBase();
+        var lindex = ((ArrayAccess) p).getIndex();
+        var lInstance = ArrayAccessFactory.getInstance((Var) lobj, (Var) lindex);
+        arrayPointsTo.computeIfAbsent(lInstance, k -> new HashSet<>()).add(q);
+        varPointsLocs.computeIfAbsent(lobj, k -> new HashSet<>());
+        varPointsLocs.get(lobj).forEach(ptLoc -> {
+            var arrayPt = ArrayAccessFactory.getInstance((Var) ptLoc.getLValue(), (Var) lindex);
+            arrayPointsLocs.computeIfAbsent(arrayPt, k -> new HashSet<>()).addAll(
+                    varPointsLocs.getOrDefault(q, new HashSet<>())
+            );
+        });
+    }
+    public void addArrayLoadConstraint(Exp p, Exp q) {
+        // 保存 LoadArray
+        var robj = ((ArrayAccess) q).getBase();
+        var rindex = ((ArrayAccess) q).getIndex();
+        var rInstance = ArrayAccessFactory.getInstance((Var) robj, (Var) rindex);
+        varPointsTo.computeIfAbsent(p, k -> new HashSet<>()).add(rInstance);
+        varPointsLocs.computeIfAbsent(robj, k -> new HashSet<>());
+        varPointsLocs.get(robj).forEach(ptLoc -> {
+            var arrayPt = ArrayAccessFactory.getInstance((Var) ptLoc.getLValue(), (Var) rindex);
+            varPointsLocs.computeIfAbsent(p, k -> new HashSet<>()).addAll(
+                    arrayPointsLocs.getOrDefault(arrayPt, new HashSet<>())
+            );
+        });
+    }
 
-    public void propagateConstraints() {
+    public boolean propagateConstraints() {
         boolean changed;
         do {
-            //System.out.println(varPointsTo);
+            if (PointerAnalysis.exceedsTimeLimit()) {
+                // 超时了立刻返回
+                return false;
+            }
+            System.out.println(fldPointsLocs);
             changed = false; // 观察这次迭代是不是有集合被改变.
             for (var varPt : varPointsTo.entrySet()) {
                 var nowVar = varPt.getKey();
@@ -208,6 +258,18 @@ public class Anderson {
                             var fieldPt = InstanceFieldAccessFactory.getInstance(((InstanceFieldAccess) pointee).getFieldRef(), ptLoc.getLValue());
                             changed |= varPointsLocs.computeIfAbsent(nowVar, k -> new HashSet<>()).addAll(
                                     fldPointsLocs.getOrDefault(fieldPt, new HashSet<>())
+                            );
+                        }
+                        logger.info("\n\n\n" + varPointsTo + "\n\n\n");
+                        logger.info("\n\n\n" + varPointsLocs + "\n\n\n");
+                    } else if (pointee instanceof ArrayAccess) {
+                        var obj = ((ArrayAccess) pointee).getBase();
+                        var index = ((ArrayAccess) pointee).getIndex();
+                        varPointsLocs.computeIfAbsent(obj, k -> new HashSet<>());
+                        for (var ptLoc : varPointsLocs.get(obj)) {
+                            var arrayPt = ArrayAccessFactory.getInstance((Var) ptLoc.getLValue(), (Var) index);
+                            changed |= varPointsLocs.computeIfAbsent(nowVar, k -> new HashSet<>()).addAll(
+                                    arrayPointsLocs.getOrDefault(arrayPt, new HashSet<>())
                             );
                         }
                     }
@@ -229,7 +291,23 @@ public class Anderson {
                     }
                 }
             }
+            // 接下来更新arrayPointsLocs
+            for (var arrayPt : arrayPointsTo.entrySet()) {
+                var nowArray = arrayPt.getKey();
+                var obj = ((ArrayAccess) nowArray).getBase();
+                var index = ((ArrayAccess) nowArray).getIndex();
+                var nowArrayPointsTo = arrayPt.getValue();
+                for (var pointee : nowArrayPointsTo) {
+                    varPointsLocs.computeIfAbsent(obj, k -> new HashSet<>());
+                    for (var ptLoc : varPointsLocs.get(obj)) {
+                        var arrayPtLoc = ArrayAccessFactory.getInstance((Var) ptLoc.getLValue(), (Var) index);
+                        changed |= arrayPointsLocs.computeIfAbsent(arrayPtLoc, k -> new HashSet<>())
+                                .addAll(varPointsLocs.getOrDefault(pointee, new HashSet<>()));
+                    }
+                }
+            }
         } while (changed);
+        return true; // 正常结束的
     }
 
     public void handleInvoke(Invoke stmt) {
@@ -247,18 +325,23 @@ public class Anderson {
          */
         // 不用特意区分每个方法的不同变量, 因为Var包裹的话就算名字相同也是不同的变量
         var invokeExp = stmt.getInvokeExp(); // 右边的调用表达式
+        /*
         if (invokeExp instanceof InvokeSpecial) {
             // 一些奇怪的比如 init, super等等
             return;
-        }
+        }*/
 
         var receiver = stmt.getResult(); // 左边接受调用
 
         var invokeMethodRef = invokeExp.getMethodRef(); // 获取调用的方法引用
         var className = invokeMethodRef.getDeclaringClass().getName();
-        if (className.startsWith("benchmark.internal.Benchmark")
-            || className.startsWith("benchmark.internal.BenchmarkN")) {
-            return;
+        var methodName = invokeMethodRef.getName();
+        if (className.equals("benchmark.internal.Benchmark")
+            || className.equals("benchmark.internal.BenchmarkN")) {
+            if (methodName.equals("test") || methodName.equals("alloc")) {
+                System.out.println("进入了alloc和test");
+                return;
+            }
         }
 
         System.out.println(stmt);
@@ -268,7 +351,17 @@ public class Anderson {
 
         var invokeArgs = invokeExp.getArgs(); // 获取调用的参数
 
+        // 现在面对invokeinterface, 必须要找到这个方法的具体实现
+        if (invokeExp instanceof InvokeInterface) {
+            // Java 1.4 中接口一定是属于这个类的
+            // 而不能实现静态方法
+            var obj = ((InvokeInterface) invokeExp).getBase();
+            // 只找到那些满足这个接口的
+
+        }
+
         var resolvedMethod = invokeMethodRef.resolve(); // 返回the concrete class member pointed by this reference
+
         var methodIR = resolvedMethod.getIR();
 
         // 把这段函数也要加入进来
@@ -277,11 +370,12 @@ public class Anderson {
             System.out.println(methodWorklist);
         }
 
-        // invokeMethodRef.getDeclaringClass(); // 返回the declaring class of the reference.
         var isStatic = invokeMethodRef.isStatic(); // 静态的话就不用加o.f()这样
         System.out.println(invokeMethodRef);
+        System.out.println(resolvedMethod);
+        logger.info(resolvedMethod.toString());
 
-        System.out.println("receriver " + receiver + " ret " + methodIR.getReturnVars());
+        System.out.println("receiver " + receiver + " ret " + methodIR.getReturnVars());
 
         if (receiver != null) {
             varPointsTo.computeIfAbsent(receiver, k -> new HashSet<>())
@@ -310,43 +404,75 @@ public class Anderson {
     // 处理 FieldStmt
     public void handleField(FieldStmt<?,?> stmt) {
         // 把每一个 Field 都拆开成单独的 变量
+        logger.info("\n\n\n");
+        logger.info(stmt.getLValue());
+        logger.info(stmt.getRValue());
+        logger.info("\n\n\n");
         if (stmt instanceof StoreField) {
             // 是一个o.f = a; 这样的语句
             // \forall x \in o, x.f \supset a
             var lvalue = stmt.getFieldAccess();
             var rvalue = stmt.getRValue();
-            addFldStoreConstraint(lvalue, rvalue);
+            if (lvalue instanceof InstanceFieldAccess) {
+                addFldStoreConstraint(lvalue, rvalue);
+            } else if (lvalue instanceof StaticFieldAccess) {
+                addCopyConstraint(lvalue, rvalue);
+            }
         } else if (stmt instanceof LoadField) {
             // 是一个 x = o.f; 这样的结构
             var lvalue = stmt.getLValue();
             var rvalue = stmt.getFieldAccess();
-            addFldLoadConstraint(lvalue, rvalue);
+            if (rvalue instanceof InstanceFieldAccess) {
+                addFldLoadConstraint(lvalue, rvalue);
+            } else if (rvalue instanceof StaticFieldAccess) {
+                addCopyConstraint(lvalue, rvalue);
+            }
         }
+        logger.info(fldPointsTo);
+        logger.info("\n\n\n");
     }
 
     public void handleArray(ArrayStmt<?, ?> stmt) {
         // 直接把a[i]视为一个Var
         // 一个数组的下标实际上是不知道的?
+        // 首先实现了数组粉碎
         if (stmt instanceof LoadArray) {
             // x = a[...]
             var lvalue = stmt.getLValue();
             var rvalue = stmt.getArrayAccess();
-            var robj = rvalue.getBase();
-            var rindex = rvalue.getIndex();
+            addArrayLoadConstraint(lvalue, rvalue);
+            logger.info("\n\n\n");
+            logger.info("LoadArray: {} = {}", lvalue, rvalue);
+            logger.info("arrayPointsTo: {}", arrayPointsTo);
+            logger.info("arrayPointsLocs: {}", arrayPointsLocs);
+            logger.info("varPointsTo: {}", varPointsTo);
+            logger.info("varPointsLocs: {}", varPointsLocs);
+            logger.info("\n\n\n");
+            // 那么就把 a 里面的所有的东西都放进 x里
+            // addCopyConstraint(lvalue, robj);
+            /*
             varPointsTo.computeIfAbsent(robj, k -> new HashSet<>()).forEach(pt -> {
                 var arrayPt = ArrayAccessFactory.getInstance((Var) pt, rindex);
                 addCopyConstraint(lvalue, arrayPt);
-            });
+            });*/
         } else if (stmt instanceof StoreArray) {
             // a[...] = x;
             var lvalue = stmt.getArrayAccess();
             var rvalue = stmt.getRValue();
-            var lobj = lvalue.getBase();
-            var lindex = lvalue.getIndex();
+            addArrayStoreConstraint(lvalue, rvalue);
+            logger.info("\n\n\n");
+            logger.info("StoreArray: {} = {}", lvalue, rvalue);
+            logger.info("arrayPointsTo: {}", arrayPointsTo);
+            logger.info("arrayPointsLocs: {}", arrayPointsLocs);
+            logger.info("varPointsTo: {}", varPointsTo);
+            logger.info("varPointsLocs: {}", varPointsLocs);
+            logger.info("\n\n\n");
+            // addCopyConstraint(lobj, rvalue);
+            /*
             varPointsTo.computeIfAbsent(lobj, k -> new HashSet<>()).forEach(pt -> {
                 var arrayPt = ArrayAccessFactory.getInstance((Var) pt, lindex);
                 addCopyConstraint(arrayPt, rvalue);
-            });
+            });*/
         }
     }
 
@@ -357,7 +483,9 @@ public class Anderson {
     public void handleThrow(Throw stmt) {
         // 我们现在是流非敏感的, 似乎不太能解决这个问题.
         // 暂时先不处理.
-        var nowMethod = stmt.getExceptionRef().getMethod();
-        methodExceptions.computeIfAbsent(nowMethod, k -> new HashSet<>()).add(stmt);
+    }
+
+    public void handleCatch(Catch stmt) {
+        // 先不处理
     }
 }

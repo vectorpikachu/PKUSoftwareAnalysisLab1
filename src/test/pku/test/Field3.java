@@ -3,6 +3,7 @@ package test;
 import benchmark.internal.Benchmark;
 import benchmark.objects.A;
 import benchmark.objects.B;
+import benchmark.objects.N;
 
 public class Field3 {
     public static void main(String[] args) {
@@ -22,9 +23,14 @@ public class Field3 {
             a1 = a2;
         }
         Benchmark.test(1, c);
+
+        Benchmark.alloc(5);
+        N n = new N();
+        Benchmark.test(2, n.next);
     }
 }
 /*
 Answer:
   1 : 3 4
+  2 : 2
 */
