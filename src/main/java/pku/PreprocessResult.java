@@ -9,6 +9,7 @@ import pascal.taie.ir.exp.InvokeStatic;
 import pascal.taie.ir.exp.Var;
 import pascal.taie.ir.stmt.Invoke;
 import pascal.taie.ir.stmt.New;
+import pascal.taie.ir.stmt.Stmt;
 
 import java.util.Map;
 
@@ -16,10 +17,12 @@ public class PreprocessResult {
 
     public final Map<New, Integer> obj_ids;
     public final Map<Integer, Var> test_pts;
+    public final Map<Integer, Stmt> test_stmts;
 
     public PreprocessResult(){
         obj_ids = new HashMap<New, Integer>();
         test_pts = new HashMap<Integer,Var>();
+        test_stmts = new HashMap<>();
     }
 
     /**
@@ -92,6 +95,7 @@ public class PreprocessResult {
                             var test_id = ((IntLiteral)lit).getNumber();
                             var pt = exp.getArg(1);
                             this.test(test_id, pt);
+                            test_stmts.put(test_id, stmt);
                         }
                     }
 
