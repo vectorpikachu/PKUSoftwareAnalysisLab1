@@ -79,12 +79,16 @@ public class PointerAnalysis extends PointerAnalysisTrivial
 
         var solver = new Solver(main, preprocess);
 
-        result = solver.getResult();
-
-        if (result == null) {
+        try {
+            result = solver.getResult();
+            if (result == null) {
+                return super.analyze();
+            }
+            dump(result);
+            return result;
+        } catch (Exception e) {
             return super.analyze();
         }
-        dump(result);
 
         // TODO
         // You need to use `preprocess` like in PointerAnalysisTrivial
@@ -95,7 +99,7 @@ public class PointerAnalysis extends PointerAnalysisTrivial
         // it's your analysis assignment to accomplish
 
         //return super.analyze();
-        return result;
+        // return super.analyze();
     }
 
 
