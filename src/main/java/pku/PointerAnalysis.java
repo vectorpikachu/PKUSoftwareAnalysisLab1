@@ -27,7 +27,6 @@ public class PointerAnalysis extends PointerAnalysisTrivial
 
     public PointerAnalysis(AnalysisConfig config) {
         super(config);
-        logger.info(config.toDetailedString());
     }
 
     @Override
@@ -44,39 +43,6 @@ public class PointerAnalysis extends PointerAnalysisTrivial
         logger.info("Main Class: {}", jclass.getName());
 
         var methods = jclass.getDeclaredMethods();
-        for (var method : methods) {
-            var ir = method.getIR();
-            IRPrinter.print(ir, System.out);
-        }
-
-
-
-        //var steensgaard = new Steensgaard(jclass, preprocess);
-        //result = steensgaard.getResult();
-
-        /*
-        var newOptions = new HashMap<String, Object>();
-        newOptions.put("exception", null);
-        newOptions.put("dump", "cfg_dump");
-
-        AnalysisConfig config = new AnalysisConfig(
-                "pku.CFGBuilder",
-                "pku.CFGBuilder",
-                "cfg",
-                null,
-                new AnalysisOptions(newOptions)
-        );
-        logger.info(config.toDetailedString());
-        cfgBuilder = new CFGBuilder(config);
-        logger.info(config.toDetailedString());
-
-        var andersonFlowAnalysis = new AndersonFlowAnalysis(main, preprocess, cfgBuilder, new ArrayList<>());
-        result = andersonFlowAnalysis.getResult();
-        */
-
-        // var anderson = new Anderson(main, jclass, preprocess);
-        // result = anderson.getResult();
-
         var solver = new Solver(main, preprocess);
 
         try {

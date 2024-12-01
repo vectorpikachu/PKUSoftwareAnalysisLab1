@@ -19,6 +19,8 @@ public class Recursion1 {
   public N recursive(int i, N m) {
     if (i < 10) {
       int j = i + 1;
+      Benchmark.alloc(2);
+      m.next = new N("new");
       return recursive(j, m.next);
     }
     return m;

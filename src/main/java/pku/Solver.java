@@ -21,8 +21,6 @@ public class Solver {
     public JMethod entryMethod;
     public HashMap<Exp, HashSet<New>> pointsLocs; // 指向的地址
     public PreprocessResult preprocessResult;
-    public HashSet<Stmt> reachableStmts;
-    public HashSet<Invoke> reachableInvoke;
     public HashMap<Var, Literal> varLiteral;
 
     public Solver(JMethod entryMethod, PreprocessResult preprocessResult) {
@@ -33,13 +31,16 @@ public class Solver {
         this.entryMethod = entryMethod;
         pointsLocs = new HashMap<>();
         this.preprocessResult = preprocessResult;
-        reachableStmts = new HashSet<>();
-        reachableInvoke = new HashSet<>();
         varLiteral = new HashMap<>();
     }
 
     public PointerAnalysisResult getResult() {
         addReachable(entryMethod);
+        for (var method : entryMethod.getDeclaringClass().getDeclaredMethods()) {
+            if (method != entryMethod && method.isStaticInitializer()) {
+                addReachable(method);
+            }
+        }
 
         while (!workList.isEmpty()) {
             //if (PointerAnalysis.exceedsTimeLimit()) {
@@ -48,9 +49,6 @@ public class Solver {
             if (PointerAnalysis.exceedsTimeLimit()) {
                 return null;
             }
-            System.out.println("workList:" + workList + "\n");
-            System.out.println("reachableMethods:" + reachableMethods + "\n");
-
             Iterator<Map.Entry<Exp, HashSet<New>>> iterator = workList.entrySet().iterator();
             if (!iterator.hasNext()) {
                 throw new NoSuchElementException();
@@ -59,7 +57,6 @@ public class Solver {
             var fstPointer = entry.getKey();
             var fstDeltaLocs = entry.getValue();
             iterator.remove(); // 删除当前键值对
-            System.out.println("now pointer:" + fstPointer + "\n");
             if (pointsLocs.get(fstPointer) != null) {
                 fstDeltaLocs.removeAll(pointsLocs.get(fstPointer));
             }
@@ -138,29 +135,22 @@ public class Solver {
 
     public void addReachable(JMethod method) {
         if (!reachableMethods.contains(method)) {
-            System.out.println("Get here.");
-            System.out.println(method + "\n");
             reachableMethods.add(method);
             var methodIR = method.getIR();
             preprocessResult.analysis(methodIR);
             var methodStmts = methodIR.getStmts();
-            reachableStmts.addAll(methodStmts);
 
             for (var stmt : methodStmts) {
                 if (stmt instanceof AssignStmt<?,?>) {
-                    System.out.println("Get here AssignStmt." + stmt + "\n");
                     if (stmt instanceof New) {
-                        System.out.println("Get here New." + stmt + "\n");
                         var lvalue = ((New) stmt).getLValue();
                         workList.computeIfAbsent(lvalue, __ -> new HashSet<>())
                                 .add((New) stmt);
                     } else if (stmt instanceof Copy) {
-                        System.out.println("Get here Copy." + stmt + "\n");
                         var lvalue = ((Copy) stmt).getLValue();
                         var rvalue = ((Copy) stmt).getRValue();
                         addEdge(rvalue, lvalue); // x = y, 加入 y -> x
                     } else if (stmt instanceof Cast) {
-                        System.out.println("Get here Cast." + stmt + "\n");
                         var lvalue = ((Cast) stmt).getLValue();
                         var rvalue = ((Cast) stmt).getRValue();
                         var rvalueReal = rvalue.getValue();
@@ -196,21 +186,17 @@ public class Solver {
                                     ArrayAccessFactory.getInstance(lobj, lvalue.getIndex(), literalIndex));
                         }
                     } else if (stmt instanceof AssignLiteral) {
-                        System.out.println("Get here AssignLiteral." + stmt + "\n");
                         var lvalue = ((AssignLiteral) stmt).getLValue();
                         var rvalue = ((AssignLiteral) stmt).getRValue();
                         varLiteral.computeIfAbsent(lvalue, __ -> (Literal) rvalue);
                     }
                 } else if (stmt instanceof Invoke) {
                     // 如果是其他种类的call, 也需要一定的处理
-                    System.out.println("Get here3." + stmt + "\n");
                     var invokeExp = ((Invoke) stmt).getInvokeExp();
                     if (invokeExp instanceof InvokeStatic) {
-                        System.out.println("Get here4." + stmt + "\n");
                         processInvokeStatic((Invoke) stmt);
                     }
                     // 否则就是 InvokeInstanceExp
-                    reachableInvoke.add((Invoke) stmt);
                 }
             }
         }
@@ -218,8 +204,6 @@ public class Solver {
 
     public void addEdge(Exp src, Exp dst) {
         if (!pointerFlowGraph.hasEdge(src, dst)) {
-            System.out.println("Add edge:" + src + "->" + dst + "\n");
-            System.out.println("pointsLocs:" + pointsLocs + "\n");
             pointerFlowGraph.addEdge(src, dst);
             if (pointsLocs.get(src) != null) {
                 workList.computeIfAbsent(dst, __ -> new HashSet<>())
@@ -241,10 +225,6 @@ public class Solver {
 
     public void processCall(Var x, New loc) {
         for (var invoke : x.getInvokes()) {
-            System.out.println("Try to process call:" + invoke + "\n");
-            System.out.println(invoke.getMethodRef().getDeclaringClass());
-            System.out.println(invoke.getMethodRef().getSubsignature());
-            System.out.println(invoke.getMethodRef().isPolymorphicSignature());
             Type type = loc.getLValue().getType();
             var methodRef = invoke.getMethodRef();
             JMethod method = null;
@@ -262,7 +242,6 @@ public class Solver {
             if (method == null) {
                 continue;
             }
-            System.out.println("Get Method:" + method + method.getSignature());
             try {
                 method.getIR();
             } catch (Exception e) {
@@ -279,12 +258,10 @@ public class Solver {
                 addReachable(method);
                 var invokeArgs = invoke.getInvokeExp().getArgs();
                 var params = methodIR.getParams();
-                System.out.println("Get here1.\n" + invokeArgs.size());
                 for (int i = 0; i < invokeArgs.size(); i++) {
                     addEdge(invokeArgs.get(i), params.get(i));
                 }
                 if (!methodIR.getReturnVars().isEmpty() && invoke.getLValue() != null) {
-                    System.out.println(methodIR.getReturnVars().get(0) + "->" + x + "\n");
                     addEdge(methodIR.getReturnVars().get(0), invoke.getResult());
                 }
             }
@@ -292,15 +269,12 @@ public class Solver {
     }
 
     public void processInvokeStatic(Invoke invoke) {
-
-        System.out.println("Get here2.\n" + invoke + "\n");
         var method = invoke.getMethodRef().resolve();
         var className = method.getDeclaringClass().getName();
         var methodName = method.getName();
         if (className.equals("benchmark.internal.Benchmark")
                 || className.equals("benchmark.internal.BenchmarkN")) {
             if (methodName.equals("test") || methodName.equals("alloc")) {
-                System.out.println("进入了alloc和test");
                 return;
             }
         }
