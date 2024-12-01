@@ -2,6 +2,7 @@ package pku;
 
 import pascal.taie.World;
 import pascal.taie.ir.exp.*;
+import pascal.taie.ir.proginfo.ExceptionEntry;
 import pascal.taie.ir.proginfo.MethodRef;
 import pascal.taie.ir.stmt.*;
 import pascal.taie.language.classes.JMethod;
@@ -14,7 +15,6 @@ import java.util.*;
 
 public class Solver {
     public HashMap<Exp, HashSet<New>> workList; // Exp is a pointer, Hashset<New> is the locs.
-    public HashSet<edge> workEdgeList; // 需要处理的callGraph的边
     public SimpleGraph<Exp> pointerFlowGraph; // Pointer Flow Graph
     public HashSet<JMethod> reachableMethods; // 可达的方法集合
     public SimpleGraph<CFGNode> callGraph;
@@ -23,6 +23,7 @@ public class Solver {
     public PreprocessResult preprocessResult;
     public HashSet<Stmt> reachableStmts;
     public HashSet<Invoke> reachableInvoke;
+    public HashMap<Var, Literal> varLiteral;
 
     public Solver(JMethod entryMethod, PreprocessResult preprocessResult) {
         workList = new HashMap<>();
@@ -34,6 +35,7 @@ public class Solver {
         this.preprocessResult = preprocessResult;
         reachableStmts = new HashSet<>();
         reachableInvoke = new HashSet<>();
+        varLiteral = new HashMap<>();
     }
 
     public PointerAnalysisResult getResult() {
@@ -92,15 +94,20 @@ public class Solver {
                         // a[i] = x
                         var lvalue = storeArray.getArrayAccess();
                         var rvalue = storeArray.getRValue();
+                        var lidx = lvalue.getIndex();
+                        var literalIndex = varLiteral.get(lidx);
                         addEdge(rvalue,
-                                ArrayAccessFactory.getInstance(lvalue.getIndex(), loc.getLValue()));
+                                ArrayAccessFactory.getInstance(loc.getLValue(),
+                                        lvalue.getIndex(), literalIndex));
                     }
 
                     for (var loadArray : ((Var) fstPointer).getLoadArrays()) {
                         // x = a[i]
                         var rvalue = loadArray.getArrayAccess();
                         var lvalue = loadArray.getLValue();
-                        addEdge(ArrayAccessFactory.getInstance(rvalue.getIndex(), loc.getLValue()),
+                        var ridx = rvalue.getIndex();
+                        var literalIndex = varLiteral.get(ridx);
+                        addEdge(ArrayAccessFactory.getInstance(loc.getLValue(), rvalue.getIndex(), literalIndex),
                                 lvalue);
                     }
 
@@ -141,7 +148,9 @@ public class Solver {
 
             for (var stmt : methodStmts) {
                 if (stmt instanceof AssignStmt<?,?>) {
+                    System.out.println("Get here AssignStmt." + stmt + "\n");
                     if (stmt instanceof New) {
+                        System.out.println("Get here New." + stmt + "\n");
                         var lvalue = ((New) stmt).getLValue();
                         workList.computeIfAbsent(lvalue, __ -> new HashSet<>())
                                 .add((New) stmt);
@@ -151,6 +160,7 @@ public class Solver {
                         var rvalue = ((Copy) stmt).getRValue();
                         addEdge(rvalue, lvalue); // x = y, 加入 y -> x
                     } else if (stmt instanceof Cast) {
+                        System.out.println("Get here Cast." + stmt + "\n");
                         var lvalue = ((Cast) stmt).getLValue();
                         var rvalue = ((Cast) stmt).getRValue();
                         var rvalueReal = rvalue.getValue();
@@ -169,6 +179,27 @@ public class Solver {
                                 continue;
                             }
                         }
+                    } else if (stmt instanceof ArrayStmt<?,?>) {
+                        if (stmt instanceof LoadArray) {
+                            var rvalue = ((LoadArray) stmt).getArrayAccess();
+                            var robj = rvalue.getBase();
+                            var ridx = rvalue.getIndex();
+                            var literalIndex = varLiteral.get(ridx);
+                            addEdge(ArrayAccessFactory.getInstance(robj, rvalue.getIndex(), literalIndex),
+                                    ((LoadArray) stmt).getLValue());
+                        } else if (stmt instanceof StoreArray) {
+                            var lvalue = ((StoreArray) stmt).getArrayAccess();
+                            var lobj = lvalue.getBase();
+                            var lidx = lvalue.getIndex();
+                            var literalIndex = varLiteral.get(lidx);
+                            addEdge(((StoreArray) stmt).getRValue(),
+                                    ArrayAccessFactory.getInstance(lobj, lvalue.getIndex(), literalIndex));
+                        }
+                    } else if (stmt instanceof AssignLiteral) {
+                        System.out.println("Get here AssignLiteral." + stmt + "\n");
+                        var lvalue = ((AssignLiteral) stmt).getLValue();
+                        var rvalue = ((AssignLiteral) stmt).getRValue();
+                        varLiteral.computeIfAbsent(lvalue, __ -> (Literal) rvalue);
                     }
                 } else if (stmt instanceof Invoke) {
                     // 如果是其他种类的call, 也需要一定的处理

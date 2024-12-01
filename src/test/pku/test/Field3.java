@@ -23,7 +23,7 @@ public class Field3 {
             a1 = a2;
         }
         Benchmark.test(1, c);
-
+        int i = 5/0;
         Benchmark.alloc(5);
         N n = new N();
         Benchmark.test(2, n.next);
