@@ -37,8 +37,10 @@ public class Solver {
     public PointerAnalysisResult getResult() {
         addReachable(entryMethod);
         for (var method : entryMethod.getDeclaringClass().getDeclaredMethods()) {
-            if (method != entryMethod && method.isStaticInitializer()) {
-                addReachable(method);
+            if (method != entryMethod) {
+                if (method.isStaticInitializer()) {
+                    addReachable(method);
+                }
             }
         }
 

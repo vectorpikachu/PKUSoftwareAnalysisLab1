@@ -37,14 +37,6 @@ public class MultiDimensionalArray {
         A[1][1][0] = new B();
         Benchmark.alloc(15);
         A[1][1][1] = new B();
-
-        // A[0] = A[1];
-        // A[0][0] = A[0][1];
-        // A[1][1] = A[1][0];
-        // A[1][1][1] = A[0][0][1];
-        // A[1][0][1] = A[0][0][1];
-        // A[0][0][1] = A[0][1][1];
-        
         Benchmark.test(1, A);
         Benchmark.test(2, A[0]);
         Benchmark.test(3, A[1]);
@@ -61,5 +53,13 @@ public class MultiDimensionalArray {
 /*
 Answer:
   1 : 1
-  2 : 1 2
+  2 : 2
+  3 : 3
+  4 : 4
+  5 : 5
+  6 : 6
+  7 : 7
+  8 : 13
+  9 : 11
+  10 : 10
 */

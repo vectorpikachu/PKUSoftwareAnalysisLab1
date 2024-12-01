@@ -70,7 +70,7 @@ public class PointerAnalysis extends PointerAnalysisTrivial
 
 
     public static boolean exceedsTimeLimit() {
-        return new Date().getTime() - startTime.getTime() > 1000 * 60 * 0.95;
+        return new Date().getTime() - startTime.getTime() > 1000 * 60 * 0.99;
     }
 
 }
